@@ -34,6 +34,7 @@ create-account <owner_name> <initial_balance_cents>
 balance <account_id>
 transfer <from_account_id> <to_account_id> <amount_cents> <idempotency_key>
 entries <account_id>
+verify
 help
 exit
 ```
@@ -52,4 +53,6 @@ transfer_id=<transfer-id>
 replayed=false
 from_balance_cents=7500
 to_balance_cents=2500
+ledger> verify
+ledger_valid=true
 ```
