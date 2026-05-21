@@ -1,7 +1,11 @@
 package com.example.ledger;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class LedgerServiceTest {
     public static void main(String[] args) {
@@ -12,6 +16,8 @@ public class LedgerServiceTest {
         run("rejects idempotency conflict", LedgerServiceTest::rejectsIdempotencyConflict);
         run("lists ledger entries by account", LedgerServiceTest::listsLedgerEntriesByAccount);
         run("verifies valid ledger", LedgerServiceTest::verifiesValidLedger);
+        run("concurrent transfers preserve total balance", LedgerServiceTest::concurrentTransfersPreserveTotalBalance);
+        run("concurrent overdrafts only commit funded transfers", LedgerServiceTest::concurrentOverdraftsOnlyCommitFundedTransfers);
         System.out.println("All tests passed");
     }
 
@@ -102,6 +108,42 @@ public class LedgerServiceTest {
         assertEquals(List.of(), result.violations());
     }
 
+    private static void concurrentTransfersPreserveTotalBalance() {
+        LedgerService service = new LedgerService();
+        Account ada = service.createAccount("Ada", 100_00);
+        Account grace = service.createAccount("Grace", 0);
+
+        runConcurrently(100, index ->
+                service.transfer(ada.id(), grace.id(), 1_00, "concurrent-transfer-" + index));
+
+        assertEquals(0L, service.getBalance(ada.id()));
+        assertEquals(100_00L, service.getBalance(grace.id()));
+        assertTrue(service.verify().valid());
+    }
+
+    private static void concurrentOverdraftsOnlyCommitFundedTransfers() {
+        LedgerService service = new LedgerService();
+        Account ada = service.createAccount("Ada", 10_00);
+        Account grace = service.createAccount("Grace", 0);
+        AtomicInteger committed = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+
+        runConcurrently(50, index -> {
+            try {
+                service.transfer(ada.id(), grace.id(), 1_00, "overdraft-race-" + index);
+                committed.incrementAndGet();
+            } catch (InsufficientFundsException error) {
+                rejected.incrementAndGet();
+            }
+        });
+
+        assertEquals(10, committed.get());
+        assertEquals(40, rejected.get());
+        assertEquals(0L, service.getBalance(ada.id()));
+        assertEquals(10_00L, service.getBalance(grace.id()));
+        assertTrue(service.verify().valid());
+    }
+
     private static void run(String name, Runnable test) {
         try {
             test.run();
@@ -141,5 +183,46 @@ public class LedgerServiceTest {
             throw new AssertionError("expected " + type.getSimpleName() + " but got " + error.getClass().getSimpleName(), error);
         }
         throw new AssertionError("expected " + type.getSimpleName());
+    }
+
+    private static void runConcurrently(int threadCount, IndexedTask task) {
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Throwable> failures = new CopyOnWriteArrayList<>();
+        List<Thread> threads = new ArrayList<>();
+
+        for (int index = 0; index < threadCount; index++) {
+            int taskIndex = index;
+            Thread thread = new Thread(() -> {
+                ready.countDown();
+                try {
+                    start.await();
+                    task.run(taskIndex);
+                } catch (Throwable error) {
+                    failures.add(error);
+                }
+            }, "ledger-test-" + index);
+            threads.add(thread);
+            thread.start();
+        }
+
+        try {
+            ready.await();
+            start.countDown();
+            for (Thread thread : threads) {
+                thread.join();
+            }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while running concurrent test", error);
+        }
+
+        if (!failures.isEmpty()) {
+            throw new AssertionError("concurrent task failed", failures.get(0));
+        }
+    }
+
+    private interface IndexedTask {
+        void run(int index) throws Exception;
     }
 }
