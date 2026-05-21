@@ -17,6 +17,7 @@ public class LedgerServiceTest {
         run("lists ledger entries by account", LedgerServiceTest::listsLedgerEntriesByAccount);
         run("verifies valid ledger", LedgerServiceTest::verifiesValidLedger);
         run("concurrent transfers preserve total balance", LedgerServiceTest::concurrentTransfersPreserveTotalBalance);
+        run("concurrent bidirectional transfers avoid deadlock", LedgerServiceTest::concurrentBidirectionalTransfersAvoidDeadlock);
         run("concurrent overdrafts only commit funded transfers", LedgerServiceTest::concurrentOverdraftsOnlyCommitFundedTransfers);
         System.out.println("All tests passed");
     }
@@ -117,6 +118,24 @@ public class LedgerServiceTest {
                 service.transfer(ada.id(), grace.id(), 1_00, "concurrent-transfer-" + index));
 
         assertEquals(0L, service.getBalance(ada.id()));
+        assertEquals(100_00L, service.getBalance(grace.id()));
+        assertTrue(service.verify().valid());
+    }
+
+    private static void concurrentBidirectionalTransfersAvoidDeadlock() {
+        LedgerService service = new LedgerService();
+        Account ada = service.createAccount("Ada", 100_00);
+        Account grace = service.createAccount("Grace", 100_00);
+
+        runConcurrently(100, index -> {
+            if (index % 2 == 0) {
+                service.transfer(ada.id(), grace.id(), 1_00, "ada-to-grace-" + index);
+            } else {
+                service.transfer(grace.id(), ada.id(), 1_00, "grace-to-ada-" + index);
+            }
+        });
+
+        assertEquals(100_00L, service.getBalance(ada.id()));
         assertEquals(100_00L, service.getBalance(grace.id()));
         assertTrue(service.verify().valid());
     }
