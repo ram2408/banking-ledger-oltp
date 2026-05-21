@@ -53,6 +53,7 @@ public class LedgerCli {
             case "balance" -> printBalance(parts);
             case "transfer" -> transfer(parts);
             case "entries" -> printEntries(parts);
+            case "verify" -> verify(parts);
             case "exit", "quit" -> {
                 System.out.println("bye");
                 return true;
@@ -121,6 +122,21 @@ public class LedgerCli {
         }
     }
 
+    private void verify(List<String> parts) {
+        requireArity(parts, 1, "verify");
+
+        LedgerVerificationResult result = service.verify();
+        if (result.valid()) {
+            System.out.println("ledger_valid=true");
+            return;
+        }
+
+        System.out.println("ledger_valid=false");
+        for (String violation : result.violations()) {
+            System.out.println("violation=" + violation);
+        }
+    }
+
     private UUID parseUuid(String value) {
         try {
             return UUID.fromString(value);
@@ -154,6 +170,7 @@ public class LedgerCli {
         System.out.println("  balance <account_id>");
         System.out.println("  transfer <from_account_id> <to_account_id> <amount_cents> <idempotency_key>");
         System.out.println("  entries <account_id>");
+        System.out.println("  verify");
         System.out.println("  help");
         System.out.println("  exit");
     }
