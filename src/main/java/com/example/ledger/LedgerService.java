@@ -7,7 +7,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 public class LedgerService {
     private final Clock clock;
@@ -147,6 +149,60 @@ public class LedgerService {
         return ledgerEntries.stream()
                 .filter(entry -> entry.accountId().equals(accountId))
                 .toList();
+    }
+
+    public synchronized LedgerVerificationResult verify() {
+        List<String> violations = new ArrayList<>();
+
+        verifyLedgerEntriesReferenceAccounts(violations);
+        verifyTransfersHaveBalancedEntries(violations);
+
+        return new LedgerVerificationResult(violations);
+    }
+
+    private void verifyLedgerEntriesReferenceAccounts(List<String> violations) {
+        for (LedgerEntry entry : ledgerEntries) {
+            if (!accounts.containsKey(entry.accountId())) {
+                violations.add("ledger entry references missing account: entry_id=" + entry.id()
+                        + " account_id=" + entry.accountId());
+            }
+        }
+    }
+
+    private void verifyTransfersHaveBalancedEntries(List<String> violations) {
+        Set<UUID> transferIdsFromEntries = ledgerEntries.stream()
+                .map(LedgerEntry::transferId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        for (UUID transferId : transferIdsFromEntries) {
+            if (!transfers.containsKey(transferId)) {
+                violations.add("ledger entry references missing transfer: transfer_id=" + transferId);
+            }
+        }
+
+        for (Transfer transfer : transfers.values()) {
+            List<LedgerEntry> entries = ledgerEntries.stream()
+                    .filter(entry -> transfer.id().equals(entry.transferId()))
+                    .toList();
+
+            long debits = entries.stream().filter(entry -> entry.type() == EntryType.DEBIT).count();
+            long credits = entries.stream().filter(entry -> entry.type() == EntryType.CREDIT).count();
+            long sum = entries.stream().mapToLong(LedgerEntry::signedAmountCents).sum();
+
+            if (entries.size() != 2) {
+                violations.add("transfer must have exactly two ledger entries: transfer_id=" + transfer.id()
+                        + " entries=" + entries.size());
+            }
+            if (debits != 1 || credits != 1) {
+                violations.add("transfer must have one debit and one credit: transfer_id=" + transfer.id()
+                        + " debits=" + debits + " credits=" + credits);
+            }
+            if (sum != 0) {
+                violations.add("transfer entries must balance to zero: transfer_id=" + transfer.id()
+                        + " sum=" + sum);
+            }
+        }
     }
 
     private Account requireAccount(UUID accountId) {

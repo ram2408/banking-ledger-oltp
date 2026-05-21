@@ -11,6 +11,7 @@ public class LedgerServiceTest {
         run("replays idempotent transfer", LedgerServiceTest::replaysIdempotentTransfer);
         run("rejects idempotency conflict", LedgerServiceTest::rejectsIdempotencyConflict);
         run("lists ledger entries by account", LedgerServiceTest::listsLedgerEntriesByAccount);
+        run("verifies valid ledger", LedgerServiceTest::verifiesValidLedger);
         System.out.println("All tests passed");
     }
 
@@ -86,6 +87,19 @@ public class LedgerServiceTest {
         assertEquals(1, graceEntries.size());
         assertEquals(EntryType.DEBIT, adaEntries.get(1).type());
         assertEquals(EntryType.CREDIT, graceEntries.get(0).type());
+    }
+
+    private static void verifiesValidLedger() {
+        LedgerService service = new LedgerService();
+        Account ada = service.createAccount("Ada", 10_00);
+        Account grace = service.createAccount("Grace", 0);
+
+        service.transfer(ada.id(), grace.id(), 3_00, "transfer-1");
+
+        LedgerVerificationResult result = service.verify();
+
+        assertTrue(result.valid());
+        assertEquals(List.of(), result.violations());
     }
 
     private static void run(String name, Runnable test) {
